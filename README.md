@@ -2,6 +2,8 @@
 
 A VSCode extension that opens CityGML Level-of-Detail 2 (LoD2) files directly as an interactive 3D scene — no external tools required.
 
+![3D Viewer](header.png)
+
 ## Features
 
 - **3D WebGL rendering** — buildings, bridges, and tunnels appear automatically when you open any `.gml` file
