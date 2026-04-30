@@ -1,0 +1,103 @@
+{
+  "name": "citygml-viewer",
+  "displayName": "CityGML LoD2 Viewer",
+  "description": "3D WebGL viewer for CityGML LoD2 files in VSCode",
+  "version": "1.0.0",
+  "publisher": "ga58lar",
+  "author": "Dominik Kulmer",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ga58lar/citygml-viewer"
+  },
+  "keywords": ["citygml", "gml", "3d", "visualization", "geospatial", "lod2", "buildings"],
+  "categories": ["Visualization"],
+  "engines": { "vscode": "^1.85.0" },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "citygmlViewer.gmlPreview",
+        "displayName": "CityGML 3D Viewer",
+        "selector": [{ "filenamePattern": "*.gml" }],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "citygmlViewer.openAsText",
+        "title": "Open as Text Editor",
+        "icon": "$(file-code)",
+        "category": "CityGML"
+      },
+      {
+        "command": "citygmlViewer.openAsViewer",
+        "title": "Open in 3D Viewer",
+        "icon": "$(open-preview)",
+        "category": "CityGML"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "citygmlViewer.openAsViewer",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "resourceExtname == .gml && activeCustomEditorId != 'citygmlViewer.gmlPreview'"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "citygmlViewer.openAsText",
+          "when": "activeCustomEditorId == 'citygmlViewer.gmlPreview'",
+          "group": "navigation"
+        },
+        {
+          "command": "citygmlViewer.openAsViewer",
+          "when": "resourceExtname == .gml && activeCustomEditorId != 'citygmlViewer.gmlPreview'",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "citygmlViewer.openAsViewer",
+          "when": "resourceExtname == .gml && activeCustomEditorId != 'citygmlViewer.gmlPreview'",
+          "group": "1_open@1"
+        },
+        {
+          "command": "citygmlViewer.openAsText",
+          "when": "activeCustomEditorId == 'citygmlViewer.gmlPreview'",
+          "group": "1_open@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "citygmlViewer.openAsViewer",
+          "when": "resourceExtname == .gml",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "earcut": "^3.0.0",
+    "fast-xml-parser": "^4.3.0",
+    "three": "^0.162.0"
+  }
+}
