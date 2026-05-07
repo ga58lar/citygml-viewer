@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { buildScene, disposeSharedMaterials } from './sceneBuilder';
-import type { SceneHandle } from './sceneBuilder';
+import { buildScene, disposeSharedMaterials, updateEdgeColor } from './sceneBuilder';
+import type { SceneHandle, RenderMode } from './sceneBuilder';
 import { createControls } from './controls';
-import { setupPicker, disposeHighlightMaterial } from './picker';
+import { setupPicker, disposeHighlightMaterial, setHighlightWireframe } from './picker';
 import type { PickerHandle } from './picker';
 import type { ExtToWebMsg, ParsedScene } from '../types';
+import { parseGML } from '../gmlParser';
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -18,7 +19,9 @@ container.appendChild(renderer.domElement);
 
 // ----- Scene & Lights -----
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1e1e1e);
+const bgDark = new THREE.Color(0x1e1e1e);
+const bgLight = new THREE.Color(0xffffff);
+scene.background = bgDark;
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(500, 800, 500);
@@ -104,9 +107,40 @@ btnOpenText.addEventListener('click', () => {
   vscode.postMessage({ type: 'openAsText' });
 });
 
+// ----- Background toggle -----
+let isDark = true;
+const btnBg = document.getElementById('btn-toggle-bg') as HTMLButtonElement;
+btnBg.addEventListener('click', () => {
+  isDark = !isDark;
+  scene.background = isDark ? bgDark : bgLight;
+  document.body.classList.toggle('light', !isDark);
+  updateEdgeColor(isDark);
+  btnBg.textContent = isDark ? 'White Background' : 'Dark Background';
+});
+
+// ----- Render mode -----
+let currentMode: RenderMode = 'surface';
+const modeButtons: Record<RenderMode, HTMLButtonElement> = {
+  surface:   document.getElementById('btn-mode-surface')!   as HTMLButtonElement,
+  wireframe: document.getElementById('btn-mode-wireframe')! as HTMLButtonElement,
+  edges:     document.getElementById('btn-mode-edges')!     as HTMLButtonElement,
+};
+
+function applyRenderMode(mode: RenderMode) {
+  currentMode = mode;
+  for (const m of ['surface', 'wireframe', 'edges'] as const) {
+    modeButtons[m].classList.toggle('active', m === mode);
+  }
+  sceneHandle?.setRenderMode(mode);
+  setHighlightWireframe(mode === 'wireframe');
+}
+
+for (const mode of ['surface', 'wireframe', 'edges'] as const) {
+  modeButtons[mode].addEventListener('click', () => applyRenderMode(mode));
+}
+
 // ----- Scene loading -----
 function loadScene(parsedScene: ParsedScene) {
-  // Dispose previous scene and picker before building new ones
   pickerHandle?.dispose();
   pickerHandle = null;
   sceneHandle?.dispose();
@@ -116,9 +150,10 @@ function loadScene(parsedScene: ParsedScene) {
   if (loadingEl) loadingEl.style.display = 'none';
 
   sceneHandle = buildScene(parsedScene, scene);
+  sceneHandle.setRenderMode(currentMode);
 
   pickerHandle = setupPicker(
-    renderer, sceneHandle.meshIndex, () => activeCamera,
+    renderer, sceneHandle, scene, () => activeCamera,
     (buildingId, objectClass, attributes) => {
       showInfo(buildingId, objectClass, attributes);
       vscode.postMessage({ type: 'selectBuilding', buildingId });
@@ -157,19 +192,29 @@ window.addEventListener('pagehide', () => {
 });
 
 // ----- Messages from extension -----
+function showError(msg: string) {
+  const loadingEl = document.getElementById('loading-msg');
+  if (loadingEl) {
+    loadingEl.textContent = `Error: ${msg}`;
+    loadingEl.style.color = '#f48771';
+  }
+}
+
 window.addEventListener('message', (event) => {
   const msg = event.data as ExtToWebMsg;
-  if (msg.type === 'scene') {
-    loadScene(msg.payload);
+  if (msg.type === 'loadFile') {
+    fetch(msg.uri)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then(text => {
+        const parsed = parseGML(text);
+        loadScene(parsed);
+      })
+      .catch(() => showError('Failed to load file'));
   } else if (msg.type === 'error') {
-    const loadingEl = document.getElementById('loading-msg');
-    if (loadingEl) {
-      const sanitized = msg.message.includes('Cannot read')
-        ? 'Failed to parse file'
-        : 'An error occurred';
-      loadingEl.textContent = `Error: ${sanitized}`;
-      loadingEl.style.color = '#f48771';
-    }
+    showError(msg.message);
   }
 });
 

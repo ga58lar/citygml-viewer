@@ -2,7 +2,7 @@
   "name": "citygml-viewer",
   "displayName": "CityGML LoD2 Viewer",
   "description": "3D WebGL viewer for CityGML LoD2 files in VSCode",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publisher": "ga58lar",
   "author": "Dominik Kulmer",
   "license": "MIT",

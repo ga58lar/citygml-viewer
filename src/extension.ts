@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import { parseGML } from './gmlParser';
+import * as path from 'path';
 import type { ExtToWebMsg } from './types';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -59,22 +58,18 @@ class GmlEditorProvider implements vscode.CustomReadonlyEditorProvider {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview'),
+        vscode.Uri.file(path.dirname(document.uri.fsPath)),
       ],
     };
     webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
 
     webviewPanel.webview.onDidReceiveMessage(async (msg) => {
       if (msg.type === 'ready') {
-        try {
-          const raw = fs.readFileSync(document.uri.fsPath, 'utf-8');
-          const scene = parseGML(raw);
-          const response: ExtToWebMsg = { type: 'scene', payload: scene };
-          webviewPanel.webview.postMessage(response);
-        } catch (e: unknown) {
-          const message = e instanceof Error ? e.message : String(e);
-          const response: ExtToWebMsg = { type: 'error', message };
-          webviewPanel.webview.postMessage(response);
-        }
+        // Send only the webview-safe URI — the webview fetches and parses the
+        // file itself, avoiding large IPC transfers and blocking the extension host.
+        const fileUri = webviewPanel.webview.asWebviewUri(document.uri).toString();
+        const response: ExtToWebMsg = { type: 'loadFile', uri: fileUri };
+        webviewPanel.webview.postMessage(response);
       }
       if (msg.type === 'openAsText') {
         await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default');
@@ -92,20 +87,27 @@ class GmlEditorProvider implements vscode.CustomReadonlyEditorProvider {
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}';">
+    content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src https:;">
   <style nonce="${nonce}">
     *, *::before, *::after { box-sizing: border-box; }
     body, html { margin: 0; padding: 0; overflow: hidden; background: #1e1e1e; width: 100%; height: 100%; }
     #canvas-container { width: 100vw; height: 100vh; display: block; }
     #ui-overlay {
       position: absolute; top: 12px; left: 12px; z-index: 10;
-      display: flex; gap: 8px; align-items: center;
+      display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
     }
+    .ui-row { display: flex; gap: 8px; align-items: center; }
     #ui-overlay button {
       background: #3c3c3c; color: #d4d4d4; border: 1px solid #555;
       padding: 6px 14px; cursor: pointer; border-radius: 3px; font-size: 12px;
     }
     #ui-overlay button:hover { background: #505050; }
+    #ui-overlay button.active { background: #0078d4; color: #fff; border-color: #0078d4; }
+    #ui-overlay button.active:hover { background: #006cbd; }
+    .btn-group { display: flex; }
+    .btn-group button { border-radius: 0; border-right-width: 0; }
+    .btn-group button:first-child { border-radius: 3px 0 0 3px; }
+    .btn-group button:last-child  { border-radius: 0 3px 3px 0; border-right-width: 1px; }
     #loading-msg {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       color: #888; font-family: monospace; font-size: 14px; z-index: 20;
@@ -129,15 +131,45 @@ class GmlEditorProvider implements vscode.CustomReadonlyEditorProvider {
     #info-panel .attr-row { display: flex; gap: 6px; margin: 3px 0; }
     #info-panel .attr-key { color: #4ec9b0; flex-shrink: 0; }
     #info-panel .attr-val { color: #ce9178; }
+
+    /* Light background theme */
+    body.light { background: #ffffff; }
+    body.light #ui-overlay button { background: #e8e8e8; color: #333; border-color: #bbb; }
+    body.light #ui-overlay button:hover { background: #d4d4d4; }
+    body.light #ui-overlay button.active { background: #0078d4; color: #fff; border-color: #0078d4; }
+    body.light #ui-overlay button.active:hover { background: #006cbd; }
+    body.light #loading-msg { color: #555; }
+    body.light #info-panel { background: #f3f3f3; color: #333; border-color: #d0d0d0; }
+    body.light #info-panel .id-label { color: #0070c1; }
+    body.light #info-panel .type-building { background: #ddd; color: #555; }
+    body.light #info-panel .type-bridge   { background: #f0e0c0; color: #7a5020; }
+    body.light #info-panel .type-tunnel   { background: #d0e4f0; color: #2060a0; }
+    body.light #info-panel hr { border-top-color: #d0d0d0; }
+    body.light #info-panel .attr-key { color: #007070; }
+    body.light #info-panel .attr-val { color: #a31515; }
   </style>
 </head>
 <body>
   <div id="canvas-container"></div>
   <div id="loading-msg">Loading CityGML...</div>
   <div id="ui-overlay">
-    <button id="btn-toggle-view">Top-Down View</button>
-    <button id="btn-reset-camera">Reset Camera</button>
-    <button id="btn-open-text">View XML Source</button>
+    <div class="ui-row">
+      <button id="btn-toggle-view">Top-Down View</button>
+      <button id="btn-reset-camera">Reset Camera</button>
+    </div>
+    <div class="ui-row">
+      <div class="btn-group">
+        <button id="btn-mode-surface" class="active">Surface</button>
+        <button id="btn-mode-wireframe">Wireframe</button>
+        <button id="btn-mode-edges">Surface+Edges</button>
+      </div>
+    </div>
+    <div class="ui-row">
+      <button id="btn-toggle-bg">White Background</button>
+    </div>
+    <div class="ui-row">
+      <button id="btn-open-text">View XML Source</button>
+    </div>
   </div>
   <div id="info-panel">
     <div id="info-content"></div>

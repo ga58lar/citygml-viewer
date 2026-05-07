@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0] — 2026-05-07
+
+- Add white background toggle
+- Add render mode selector: Surface, Wireframe, Surface+Edges
+- Fix loading of CityGML files using the default XML namespace instead of the `core:` prefix (e.g. Bayern open data)
+- Fix rendering performance for large files: geometry is now merged by material type, reducing GPU draw calls from O(surfaces) to O(materials) regardless of scene size
+- Fix loading of large files: parsing now runs in the webview instead of the extension host, eliminating VS Code IPC as a bottleneck
+
 ## [1.0.1] — 2026-05-07
 
 - Fix empty visualization for CityGML files that use the default namespace instead of the `core:` prefix (e.g. Bayern open data files)
