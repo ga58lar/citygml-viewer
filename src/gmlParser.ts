@@ -194,7 +194,7 @@ export function parseGML(xmlText: string): ParsedScene {
   });
 
   const doc = parser.parse(xmlText);
-  const cityModel = doc['core:CityModel'];
+  const cityModel = doc['core:CityModel'] ?? doc['CityModel'];
 
   const env = cityModel?.['gml:boundedBy']?.['gml:Envelope'];
   const lower = getText(env?.['gml:lowerCorner']).trim().split(/\s+/).map(Number);
@@ -205,7 +205,7 @@ export function parseGML(xmlText: string): ParsedScene {
     z: (lower[2] + upper[2]) / 2,
   };
 
-  const members = asArray(cityModel?.['core:cityObjectMember']);
+  const members = asArray(cityModel?.['core:cityObjectMember'] ?? cityModel?.['cityObjectMember']);
   const buildings: ParsedBuilding[] = [];
 
   for (const member of members) {
