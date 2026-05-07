@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.1] — 2026-05-07
+
+- Fix empty visualization for CityGML files that use the default namespace instead of the `core:` prefix (e.g. Bayern open data files)
+
 ## [1.0.0] — 2026-04-30
 
 - Initial release
