@@ -20,7 +20,7 @@ export interface ParsedScene {
 }
 
 export type ExtToWebMsg =
-  | { type: 'scene'; payload: ParsedScene }
+  | { type: 'loadFile'; uri: string }
   | { type: 'error'; message: string };
 
 export type WebToExtMsg =

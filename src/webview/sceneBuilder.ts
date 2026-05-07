@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import type { ObjectClass, ParsedScene, ParsedSurface } from '../types';
+import type { ObjectClass, ParsedBuilding, ParsedScene, ParsedSurface } from '../types';
+
+export type RenderMode = 'surface' | 'wireframe' | 'edges';
 
 export interface MeshEntry {
   buildingId: string;
@@ -8,67 +10,138 @@ export interface MeshEntry {
   attributes: Record<string, string>;
 }
 
-// Shared materials — one instance per visual style, reused across scene rebuilds.
-// Disposed only on final page teardown via disposeSharedMaterials().
-const BUILDING_MATS: Record<string, THREE.MeshLambertMaterial> = {
+const SURFACE_MATS: Record<string, THREE.MeshLambertMaterial> = {
   wall:    new THREE.MeshLambertMaterial({ color: 0x888888, side: THREE.DoubleSide }),
   roof:    new THREE.MeshLambertMaterial({ color: 0xcc3333, side: THREE.DoubleSide }),
   ground:  new THREE.MeshLambertMaterial({ color: 0x555555, side: THREE.DoubleSide }),
   closure: new THREE.MeshLambertMaterial({ color: 0x888888, side: THREE.DoubleSide }),
+  bridge:  new THREE.MeshLambertMaterial({ color: 0xc8a878, side: THREE.DoubleSide }),
+  tunnel:  new THREE.MeshLambertMaterial({ color: 0x485058, side: THREE.DoubleSide }),
 };
-const BRIDGE_MAT = new THREE.MeshLambertMaterial({ color: 0xc8a878, side: THREE.DoubleSide });
-const TUNNEL_MAT = new THREE.MeshLambertMaterial({ color: 0x485058, side: THREE.DoubleSide });
+const EDGE_MAT = new THREE.LineBasicMaterial({ color: 0xaaaaaa });
 
-export function disposeSharedMaterials(): void {
-  for (const mat of Object.values(BUILDING_MATS)) mat.dispose();
-  BRIDGE_MAT.dispose();
-  TUNNEL_MAT.dispose();
+function matKey(objectClass: ObjectClass, surfaceType: string): string {
+  if (objectClass === 'bridge') return 'bridge';
+  if (objectClass === 'tunnel') return 'tunnel';
+  return surfaceType;
 }
 
-function getMaterial(objectClass: ObjectClass, surfaceType: string): THREE.MeshLambertMaterial {
-  if (objectClass === 'bridge') return BRIDGE_MAT;
-  if (objectClass === 'tunnel') return TUNNEL_MAT;
-  return BUILDING_MATS[surfaceType] ?? BUILDING_MATS['wall'];
+function setSharedWireframe(on: boolean): void {
+  for (const mat of Object.values(SURFACE_MATS)) mat.wireframe = on;
+}
+
+export function disposeSharedMaterials(): void {
+  for (const mat of Object.values(SURFACE_MATS)) mat.dispose();
+  EDGE_MAT.dispose();
+}
+
+export function updateEdgeColor(isDark: boolean): void {
+  EDGE_MAT.color.setHex(isDark ? 0xaaaaaa : 0x333333);
 }
 
 export interface SceneHandle {
-  meshIndex: Map<THREE.Mesh, MeshEntry>;
+  pickTargets: THREE.Mesh[];
+  lookupFace(mesh: THREE.Mesh, faceIndex: number): MeshEntry | undefined;
+  createHighlightMesh(buildingId: string): THREE.Mesh;
+  setRenderMode(mode: RenderMode): void;
   dispose(): void;
 }
 
 export function buildScene(parsedScene: ParsedScene, scene: THREE.Scene): SceneHandle {
-  const meshIndex = new Map<THREE.Mesh, MeshEntry>();
-  const geometries: THREE.BufferGeometry[] = [];
+  // Accumulate triangles and per-face entries into one bucket per material key
+  const buckets = new Map<string, { vertices: number[]; entries: MeshEntry[] }>();
 
   for (const building of parsedScene.buildings) {
     for (const surface of building.surfaces) {
       if (surface.triangles.length < 9) continue;
-
-      const geometry = new THREE.BufferGeometry();
-      const verts = new Float32Array(surface.triangles);
-      geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-      geometry.computeVertexNormals();
-      geometries.push(geometry);
-
-      const mesh = new THREE.Mesh(geometry, getMaterial(building.objectClass, surface.type));
-      scene.add(mesh);
-
-      meshIndex.set(mesh, {
+      const key = matKey(building.objectClass, surface.type);
+      if (!buckets.has(key)) buckets.set(key, { vertices: [], entries: [] });
+      const bucket = buckets.get(key)!;
+      const entry: MeshEntry = {
         buildingId: building.id,
         objectClass: building.objectClass,
         surface,
         attributes: building.attributes,
-      });
+      };
+      const triCount = Math.floor(surface.triangles.length / 9);
+      for (let t = 0; t < triCount; t++) bucket.entries.push(entry);
+      for (let i = 0; i < surface.triangles.length; i++) bucket.vertices.push(surface.triangles[i]);
+    }
+  }
+
+  // One merged mesh per material — reduces draw calls from O(surfaces) to O(materials)
+  const pickTargets: THREE.Mesh[] = [];
+  const geometries: THREE.BufferGeometry[] = [];
+  const faceEntryMaps = new Map<THREE.Mesh, MeshEntry[]>();
+
+  for (const [key, { vertices, entries }] of buckets) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
+    geo.computeVertexNormals();
+    geometries.push(geo);
+    const mesh = new THREE.Mesh(geo, SURFACE_MATS[key] ?? SURFACE_MATS['wall']);
+    scene.add(mesh);
+    pickTargets.push(mesh);
+    faceEntryMaps.set(mesh, entries);
+  }
+
+  // Keep building data for on-demand highlight mesh creation
+  const buildingMap = new Map<string, ParsedBuilding>(
+    parsedScene.buildings.map(b => [b.id, b])
+  );
+
+  // Edge geometry built lazily on first switch to 'edges' mode
+  let edgePairs: { lines: THREE.LineSegments; geo: THREE.EdgesGeometry }[] | null = null;
+
+  function ensureEdges() {
+    if (edgePairs) return;
+    edgePairs = [];
+    for (const geo of geometries) {
+      const edgeGeo = new THREE.EdgesGeometry(geo);
+      const lines = new THREE.LineSegments(edgeGeo, EDGE_MAT);
+      scene.add(lines);
+      edgePairs.push({ lines, geo: edgeGeo });
     }
   }
 
   return {
-    meshIndex,
+    pickTargets,
+
+    lookupFace(mesh, faceIndex) {
+      return faceEntryMaps.get(mesh)?.[faceIndex];
+    },
+
+    createHighlightMesh(buildingId) {
+      const building = buildingMap.get(buildingId);
+      const verts: number[] = [];
+      if (building) {
+        for (const surface of building.surfaces) {
+          for (let i = 0; i < surface.triangles.length; i++) verts.push(surface.triangles[i]);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      return new THREE.Mesh(geo);
+    },
+
+    setRenderMode(mode) {
+      setSharedWireframe(mode === 'wireframe');
+      if (mode === 'edges') {
+        ensureEdges();
+        for (const { lines } of edgePairs!) lines.visible = true;
+      } else if (edgePairs) {
+        for (const { lines } of edgePairs) lines.visible = false;
+      }
+    },
+
     dispose() {
-      for (const mesh of meshIndex.keys()) scene.remove(mesh);
+      for (const mesh of pickTargets) scene.remove(mesh);
+      if (edgePairs) {
+        for (const { lines } of edgePairs) scene.remove(lines);
+        for (const { geo } of edgePairs) geo.dispose();
+      }
       for (const geo of geometries) geo.dispose();
-      meshIndex.clear();
-      geometries.length = 0;
+      setSharedWireframe(false);
     },
   };
 }
